@@ -1,6 +1,8 @@
 {
-  "name": "frontend",
+  "name": "nexusstream-frontend",
   "private": true,
+  "author": "Nilesh Thokale",
+  "description": "Universal video streaming web app - NexusStream frontend",
   "version": "0.0.0",
   "type": "module",
   "scripts": {

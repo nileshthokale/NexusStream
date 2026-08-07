@@ -56,7 +56,7 @@ A modern, responsive video streaming application built with **React**, **Tailwin
 1. **Clone the repository**
 
 ```bash
-git clone https://github.com/your-username/NexusStream.git
+git clone https://github.com/nileshthokale/NexusStream.git
 cd NexusStream
 ```
 
@@ -171,6 +171,16 @@ Supports range requests for seeking in large video files.
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## Author
+
+**Nilesh Thokale**
+
+- GitHub: [@nileshthokale](https://github.com/nileshthokale)
+- LinkedIn: [nileshthokale](https://www.linkedin.com/in/nileshthokale/)
+- Website: [gokalifree.in](https://gokalifree.in) — Cybersecurity
 
 ---
 

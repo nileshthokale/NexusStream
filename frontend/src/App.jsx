@@ -252,10 +252,17 @@ function App() {
       {/* Footer */}
       <footer className="w-full py-6 sm:py-8 text-center border-t border-white/5 relative z-10 bg-black/20 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4">
-          <p className="text-zinc-600 text-xs sm:text-sm">
-            Built with React, Tailwind CSS & Vite
+          <p className="text-zinc-500 text-xs sm:text-sm">
+            Built by <a href="https://github.com/nileshthokale" target="_blank" rel="noopener noreferrer" className="text-red-400 hover:text-red-300 transition-colors font-medium">Nilesh Thokale</a>
           </p>
-          <p className="text-zinc-700 text-[10px] sm:text-xs mt-1">
+          <div className="flex items-center justify-center gap-4 mt-2">
+            <a href="https://github.com/nileshthokale" target="_blank" rel="noopener noreferrer" className="text-zinc-600 hover:text-white text-[10px] sm:text-xs transition-colors">GitHub</a>
+            <span className="text-zinc-800">|</span>
+            <a href="https://www.linkedin.com/in/nileshthokale/" target="_blank" rel="noopener noreferrer" className="text-zinc-600 hover:text-white text-[10px] sm:text-xs transition-colors">LinkedIn</a>
+            <span className="text-zinc-800">|</span>
+            <a href="https://gokalifree.in" target="_blank" rel="noopener noreferrer" className="text-zinc-600 hover:text-white text-[10px] sm:text-xs transition-colors">Website</a>
+          </div>
+          <p className="text-zinc-700 text-[10px] sm:text-xs mt-2">
             NexusStream &mdash; Universal Video Streaming
           </p>
         </div>
