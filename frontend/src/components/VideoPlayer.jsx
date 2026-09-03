@@ -25,6 +25,7 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
   const skipTextOverlayRef = useRef(null);
   const hlsRef = useRef(null);
   const dashRef = useRef(null);
+  const audioCheckDoneRef = useRef(false);
 
   // Synchronous URL type detection using useMemo to avoid unnecessary re-renders
   const isYouTube = useMemo(() => url?.includes('youtube.com') || url?.includes('youtu.be'), [url]);
@@ -38,6 +39,7 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
   const [loading, setLoading] = useState(false);
   const [qualities, setQualities] = useState([]);
   const [currentQuality, setCurrentQuality] = useState(-1);
+  const [noAudio, setNoAudio] = useState(false);
 
   // Player UI State (Only applicable for HTML5/HLS/DASH)
   const [isPlaying, setIsPlaying] = useState(false);
@@ -88,15 +90,46 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
     setLoading(true);
     setQualities([]);
     setCurrentQuality(-1);
-    
-    // NOTE: Removed state resets like setCurrentTime(0) and setIsPlaying(false)
-    // to preserve playback flow and prevent unnecessary visual stutter.
+    setNoAudio(false);
+    audioCheckDoneRef.current = false;
 
     const video = videoRef.current;
     if (!video) return;
 
+    // Probe the URL to report the real reason a video failed (works when the
+    // proxy is on because it sends CORS headers; direct probes may be blocked)
+    const diagnoseFailure = async () => {
+      setLoading(false);
+      if (proxyEnabled) {
+        try {
+          const resp = await fetch(proxiedUrl, { method: 'HEAD' });
+          if (resp.status === 404) {
+            setError('Video not found (404). The file has been moved or removed from the server.');
+            return;
+          }
+          if (resp.status === 403 || resp.status === 401) {
+            setError(`Access denied (${resp.status}). The link is expired, signed, or hotlink-protected.`);
+            return;
+          }
+          if (!resp.ok) {
+            setError(`Server responded with ${resp.status}.`);
+            return;
+          }
+          setError('The server responded OK, but the file is not a video format your browser can play.');
+          return;
+        } catch {
+          // fall through to generic message
+        }
+      }
+      setError('Error loading video format or CORS restrictions blocked access. Try enabling the CORS Proxy toggle in the header.');
+    };
+
     const loadVideo = async () => {
       try {
+        // The <video> element persists across loads; re-apply audio state to it
+        video.muted = isMuted;
+        video.volume = volume;
+
         if (isHls) {
           // HLS implementation
           if (Hls.isSupported()) {
@@ -164,12 +197,12 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
           
         } else {
           // Standard MP4 Fallback
-          video.src = proxiedUrl;
           video.onloadeddata = () => { setLoading(false); };
-          video.onerror = () => { 
-            setError('Error loading video format or CORS restrictions blocked access.'); 
-            setLoading(false); 
+          video.onerror = () => {
+            diagnoseFailure();
           };
+          video.src = proxiedUrl;
+          video.load();
         }
       } catch (err) { 
         setError('Player error: ' + err.message); 
@@ -190,10 +223,17 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
         if (dashRef.current.destroy) dashRef.current.destroy(); 
         dashRef.current = null; 
       }
+      if (videoRef.current) {
+        videoRef.current.onloadeddata = null;
+        videoRef.current.onerror = null;
+        videoRef.current.removeAttribute('src');
+        videoRef.current.load();
+      }
       setLoading(false);
     };
+    // Re-run when url changes OR when the proxy toggle changes (proxiedUrl recomputes)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url]);
+  }, [proxiedUrl]);
 
   const handleSkip = useCallback((seconds) => {
     const text = seconds > 0 ? `+${seconds}s` : `${seconds}s`;
@@ -283,10 +323,25 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
     if (!video || !video.duration) return;
     setCurrentTime(video.currentTime);
     setProgress((video.currentTime / video.duration) * 100);
-    
+
     if (video.buffered.length > 0) {
       const bufferedEnd = video.buffered.end(video.buffered.length - 1);
       setBuffer((bufferedEnd / video.duration) * 100);
+    }
+
+    // One-shot audio detection (after 3s of playback to avoid false positives):
+    // flags videos with no audio track or an audio codec the browser can't decode
+    if (!audioCheckDoneRef.current) {
+      const hasAudio =
+        video.mozHasAudio === true ||
+        (typeof video.webkitAudioDecodedByteCount === 'number' && video.webkitAudioDecodedByteCount > 0) ||
+        (video.audioTracks && video.audioTracks.length > 0);
+      if (hasAudio) {
+        audioCheckDoneRef.current = true;
+      } else if (video.currentTime > 3 && video.readyState >= 2) {
+        audioCheckDoneRef.current = true;
+        setNoAudio(true);
+      }
     }
   };
 
@@ -384,9 +439,9 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
   // --------------------------------------------------
 
   return (
-    <div 
+    <div
       ref={containerRef}
-      className={`relative w-full aspect-video bg-black rounded-lg sm:rounded-2xl shadow-2xl overflow-hidden group flex items-center justify-center font-sans tracking-wide border border-zinc-900 transition-all ${isFullscreen ? 'rounded-none border-none' : ''}`}
+      className={`relative w-full aspect-video bg-surface-base rounded-lg sm:rounded-xl shadow-2xl overflow-hidden group flex items-center justify-center font-sans tracking-wide border border-border-muted/50 transition-all ${isFullscreen ? 'rounded-none border-none' : ''}`}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => !isReactPlayerFallback && isPlaying && setShowControls(false)}
       onDoubleClick={!isReactPlayerFallback ? toggleFullscreen : undefined}
@@ -395,31 +450,40 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
         if(e.target.tagName.toLowerCase() === 'video' || e.target.id === 'click-overlay') togglePlay();
       }}
     >
-      {/* Universal Loading States */}
+      {/* Universal Loading State */}
       {loading && !error && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none">
-           <div className="w-16 h-16 border-[5px] border-red-600 border-t-transparent rounded-full animate-spin shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-surface-base/60 backdrop-blur-sm pointer-events-none" role="status" aria-live="polite">
+           <div className="w-16 h-16 border-[5px] border-accent border-t-transparent rounded-2xl animate-spin shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
+           <span className="sr-only">Loading video</span>
         </div>
       )}
-      
-      {/* Universal Error States */}
+
+      {/* Universal Error State */}
       {error && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-zinc-900 overflow-hidden">
-          <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-600 to-transparent"></div>
-          <Activity size={48} className="text-red-500 mb-4 animate-pulse relative z-10" />
-          <div className="text-red-400 font-semibold text-lg relative z-10 px-8 text-center max-w-lg">{error}</div>
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-surface-muted overflow-hidden" role="alert" aria-live="assertive">
+          <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-accent to-transparent" aria-hidden="true"></div>
+          <Activity size={48} className="text-accent mb-4 animate-pulse relative z-10" aria-hidden="true" />
+          <div className="text-text-secondary font-semibold text-3xl relative z-10 px-8 text-center max-w-lg">{error}</div>
         </div>
       )}
 
       {/* Skip Feedback Overlay without React State to prevent tearing players down */}
-      <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
-        <div 
+      <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none" aria-hidden="true">
+        <div
           ref={skipTextOverlayRef}
-          className="bg-black/60 text-white text-3xl md:text-5xl font-bold px-6 py-4 rounded-full backdrop-blur-md shadow-[0_0_20px_rgba(0,0,0,0.5)] transition-all duration-300 opacity-0 transform scale-100"
+          className="bg-surface-base/60 text-text-primary text-3xl md:text-5xl font-bold px-6 py-4 rounded-2xl backdrop-blur-md shadow-[0_0_20px_rgba(0,0,0,0.5)] transition-all duration-normal opacity-0 transform scale-100"
         >
           {/* Handled by refs seamlessly */}
         </div>
       </div>
+
+      {/* No-audio notice: missing track or unsupported audio codec */}
+      {noAudio && !error && !isReactPlayerFallback && (
+        <div className="absolute top-3 left-3 z-30 flex items-center gap-2 bg-surface-base/70 backdrop-blur-md text-text-secondary text-md font-medium px-3 py-2 rounded-lg border border-border-muted/50 pointer-events-none max-w-[85%]" role="status">
+          <VolumeX size={14} className="text-accent flex-shrink-0" aria-hidden="true" />
+          <span>No audio detected &mdash; this video may have no audio track or use an audio codec your browser can&rsquo;t decode (e.g., AC3/DTS)</span>
+        </div>
+      )}
 
       {/* Conditionally Render Single Player */}
       {isReactPlayerFallback ? (
@@ -430,7 +494,7 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
             width="100%"
             height="100%"
             controls={true}
-            playing={true}  // Play automatically and handle anti-buffering
+            playing={true}
             onReady={() => setLoading(false)}
             onStart={() => setLoading(false)}
             onBuffer={() => setLoading(true)}
@@ -447,110 +511,117 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
           {/* Native HTML5 Tag strictly for MP4/HLS/DASH */}
           <video
             ref={videoRef}
-            className={`w-full h-full object-contain focus:outline-none ${showControls && !isPlaying ? 'scale-[0.99] brightness-90' : 'scale-100 brightness-100'} transition-all duration-500 will-change-transform`}
-            crossOrigin="anonymous"
+            className={`w-full h-full object-contain focus:outline-none ${showControls && !isPlaying ? 'scale-[0.99] brightness-90' : 'scale-100 brightness-100'} transition-all duration-normal will-change-transform`}
+            crossOrigin={proxyEnabled ? 'anonymous' : undefined}
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={handleLoadedMetadata}
             onEnded={() => setIsPlaying(false)}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
+            aria-label="Video player"
           />
 
           {/* Click Overlay strictly for MP4/HLS/DASH */}
-          <div id="click-overlay" className="absolute inset-0 z-10 cursor-pointer" />
+          <div id="click-overlay" className="absolute inset-0 z-10 cursor-pointer" aria-hidden="true" />
 
-          {/* Modern Glassmorphic Controls Overlay (Native Only) */}
-          <div 
-            className={`absolute inset-x-0 bottom-0 z-30 pt-24 pb-4 px-6 bg-gradient-to-t from-black/95 via-black/60 to-transparent transition-all duration-500 ease-out transform ${showControls ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'}`}
+          {/* Glassmorphic Controls Overlay (Native Only) */}
+          <div
+            className={`absolute inset-x-0 bottom-0 z-30 pt-24 pb-4 px-6 bg-gradient-to-t from-surface-base/95 via-surface-base/60 to-transparent transition-all duration-normal ease-out transform ${showControls ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'}`}
           >
             {/* Progress Bar Container */}
-            <div className="relative w-full h-2 mb-4 group/progress cursor-pointer flex items-center rounded-full overflow-visible" >
-              <div className="absolute left-0 w-full h-1.5 bg-white/20 rounded-full transition-all group-hover/progress:h-2.5 shadow-inner" />
-              <div className="absolute left-0 h-1.5 bg-white/40 rounded-full transition-all group-hover/progress:h-2.5 backdrop-blur-sm" style={{ width: `${buffer}%` }} />
-              <div className="absolute left-0 h-1.5 bg-red-600 rounded-full z-10 transition-all group-hover/progress:h-2.5 shadow-[0_0_10px_rgba(220,38,38,0.7)]" style={{ width: `${progress}%` }} />
-              <div 
-                className="absolute h-4 w-4 bg-white border-2 border-red-600 rounded-full z-20 transform -translate-y-1/2 top-1/2 scale-0 group-hover/progress:scale-100 transition-transform shadow-lg" 
-                style={{ left: `calc(${progress}% - 8px)` }} 
+            <div className="relative w-full h-2 mb-4 group/progress cursor-pointer flex items-center rounded-2xl overflow-visible">
+              <div className="absolute left-0 w-full h-1.5 bg-white/20 rounded-2xl transition-all group-hover/progress:h-2.5 shadow-inner" />
+              <div className="absolute left-0 h-1.5 bg-white/40 rounded-2xl transition-all group-hover/progress:h-2.5 backdrop-blur-sm" style={{ width: `${buffer}%` }} />
+              <div className="absolute left-0 h-1.5 bg-accent rounded-2xl z-10 transition-all group-hover/progress:h-2.5 shadow-[0_0_10px_rgba(220,38,38,0.7)]" style={{ width: `${progress}%` }} />
+              <div
+                className="absolute h-4 w-4 bg-white border-2 border-accent rounded-2xl z-20 transform -translate-y-1/2 top-1/2 scale-0 group-hover/progress:scale-100 transition-transform shadow-lg"
+                style={{ left: `calc(${progress}% - 8px)` }}
               />
-              <input 
+              <input
                 type="range" min="0" max="100" value={progress || 0}
                 onChange={handleSeekChange}
+                aria-label="Seek video position"
                 className="absolute inset-0 w-full h-full opacity-0 z-30 cursor-pointer"
               />
             </div>
 
             {/* Bottom Controls Row */}
-            <div className="flex items-center justify-between text-white/90">
+            <div className="flex items-center justify-between text-text-primary/90">
               <div className="flex items-center gap-4 sm:gap-6">
-                <button onClick={(e) => { e.stopPropagation(); handleSkip(-15); }} className="text-white hover:text-red-500 hover:scale-110 transition-all focus:outline-none drop-shadow-md" title="Backward 15s">
-                  <Rewind size={24} fill="currentColor" />
-                </button>
-                
-                <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} className="text-white hover:text-red-500 hover:scale-110 transition-all focus:outline-none drop-shadow-md">
-                  {isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} ml={1} fill="currentColor" />}
+                <button onClick={(e) => { e.stopPropagation(); handleSkip(-15); }} className="text-text-primary hover:text-accent hover:scale-110 transition-all focus:outline-none drop-shadow-md" title="Backward 15s" aria-label="Backward 15 seconds">
+                  <Rewind size={24} fill="currentColor" aria-hidden="true" />
                 </button>
 
-                <button onClick={(e) => { e.stopPropagation(); handleSkip(15); }} className="text-white hover:text-red-500 hover:scale-110 transition-all focus:outline-none drop-shadow-md" title="Forward 15s">
-                  <FastForward size={24} fill="currentColor" />
+                <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} className="text-text-primary hover:text-accent hover:scale-110 transition-all focus:outline-none drop-shadow-md" aria-label={isPlaying ? 'Pause video' : 'Play video'}>
+                  {isPlaying ? <Pause size={28} fill="currentColor" aria-hidden="true" /> : <Play size={28} fill="currentColor" aria-hidden="true" />}
                 </button>
-                
+
+                <button onClick={(e) => { e.stopPropagation(); handleSkip(15); }} className="text-text-primary hover:text-accent hover:scale-110 transition-all focus:outline-none drop-shadow-md" title="Forward 15s" aria-label="Forward 15 seconds">
+                  <FastForward size={24} fill="currentColor" aria-hidden="true" />
+                </button>
+
                 <div className="flex items-center gap-3 group/volume relative">
-                  <button onClick={toggleMute} className="hover:text-red-500 hover:scale-110 transition-all focus:outline-none drop-shadow-md">
-                    {isMuted || volume === 0 ? <VolumeX size={24} /> : <Volume2 size={24} />}
+                  <button onClick={toggleMute} className="text-text-primary hover:text-accent hover:scale-110 transition-all focus:outline-none drop-shadow-md" aria-label={isMuted ? 'Unmute volume' : 'Mute volume'}>
+                    {isMuted || volume === 0 ? <VolumeX size={24} aria-hidden="true" /> : <Volume2 size={24} aria-hidden="true" />}
                   </button>
-                  <div className="w-0 overflow-hidden group-hover/volume:w-24 transition-all duration-300 ease-out flex items-center">
-                    <input 
+                  <div className="w-0 overflow-hidden group-hover/volume:w-24 transition-all duration-normal ease-out flex items-center">
+                    <input
                       type="range" min="0" max="1" step="0.05" value={volume}
                       onChange={handleVolumeChange}
-                      className="w-20 h-1.5 bg-white/30 rounded-full appearance-none cursor-pointer accent-red-600 hover:accent-red-500"
+                      aria-label="Volume"
+                      className="w-20 h-1.5 bg-white/30 rounded-2xl appearance-none cursor-pointer accent-accent"
                     />
                   </div>
                 </div>
 
-                <div className="text-sm font-semibold tracking-wider font-mono opacity-80 select-none drop-shadow-md bg-black/30 px-3 py-1 rounded-md backdrop-blur-md border border-white/10 hidden sm:block">
-                  {formatTime(currentTime)} <span className="text-red-500/80 mx-1">/</span> {formatTime(duration)}
+                <div className="text-sm font-semibold tracking-wider font-mono opacity-80 select-none drop-shadow-md bg-surface-base/30 px-3 py-1 rounded-md backdrop-blur-md border border-border-muted/50 hidden sm:block" aria-live="off">
+                  {formatTime(currentTime)} <span className="text-accent/80 mx-1" aria-hidden="true">/</span> {formatTime(duration)}
                 </div>
               </div>
 
               {/* Right Controls */}
               <div className="flex items-center gap-5 relative">
                 {showSettings && (
-                  <div className="absolute bottom-14 right-0 bg-black/80 backdrop-blur-xl border border-white/10 rounded-xl p-3 min-w-[220px] mb-2 shadow-2xl z-50">
+                  <div className="absolute bottom-14 right-0 bg-surface-base/80 backdrop-blur-xl border border-border-muted/50 rounded-xl p-3 min-w-[220px] mb-2 shadow-2xl z-50" role="menu" aria-label="Playback settings">
                     <div className="mb-3">
-                      <div className="text-[10px] text-red-500 uppercase font-bold tracking-widest px-2 mb-2 flex items-center gap-2">
-                        <Activity size={12}/> Video Quality
+                      <div className="text-sm text-accent uppercase font-bold tracking-widest px-2 mb-2 flex items-center gap-2">
+                        <Activity size={12} aria-hidden="true"/> Video Quality
                       </div>
                       {qualities.length > 0 ? (
                         <div className="space-y-1">
-                          <button 
-                            onClick={() => handleQualityChange(-1)} 
-                            className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentQuality === -1 ? 'bg-red-600/20 text-red-500' : 'hover:bg-white/10 text-white/90'}`}
+                          <button
+                            onClick={() => handleQualityChange(-1)}
+                            className={`w-full text-left px-3 py-2 rounded-md text-md font-medium transition-colors duration-instant ${currentQuality === -1 ? 'bg-accent/20 text-accent' : 'hover:bg-white/10 text-text-primary'}`}
+                            role="menuitem"
                           >
                             Auto (Recommended)
                           </button>
                           {qualities.sort((a,b) => b.height - a.height).map(q => (
-                            <button 
+                            <button
                               key={q.index}
                               onClick={() => handleQualityChange(q.index)}
-                              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentQuality === q.index ? 'bg-red-600/20 text-red-500' : 'hover:bg-white/10 text-white/90'}`}
+                              className={`w-full text-left px-3 py-2 rounded-md text-md font-medium transition-colors duration-instant ${currentQuality === q.index ? 'bg-accent/20 text-accent' : 'hover:bg-white/10 text-text-primary'}`}
+                              role="menuitem"
                             >
                               {q.height ? `${q.height}p HD` : `${(q.bitrate/1000).toFixed(0)} kbps`}
                             </button>
                           ))}
                         </div>
-                      ) : <div className="px-3 py-2 text-sm text-zinc-400 italic bg-white/5 rounded-lg">Auto-configured by source</div>}
+                      ) : <div className="px-3 py-2 text-md text-text-tertiary italic bg-white/5 rounded-md">Auto-configured by source</div>}
                     </div>
-                    
-                    <div className="border-t border-white/10 my-2" />
-                    
+
+                    <div className="border-t border-border-muted/50 my-2" />
+
                     <div>
-                      <div className="text-[10px] text-red-500 uppercase font-bold tracking-widest px-2 mb-2">Playback Speed</div>
+                      <div className="text-sm text-accent uppercase font-bold tracking-widest px-2 mb-2">Playback Speed</div>
                       <div className="flex gap-1">
                         {[0.5, 1, 1.5, 2, 10].map(speed => (
                            <button
                              key={speed}
                              onClick={() => changePlaybackRate(speed)}
-                             className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${playbackRate === speed ? 'bg-red-600 text-white shadow-[0_0_10px_rgba(220,38,38,0.5)]' : 'hover:bg-white/10 text-white/90'}`}
+                             className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all duration-instant ${playbackRate === speed ? 'bg-accent text-white shadow-[0_0_10px_rgba(220,38,38,0.5)]' : 'hover:bg-white/10 text-text-primary'}`}
+                             role="menuitemradio"
+                             aria-checked={playbackRate === speed}
                            >
                              {speed}x
                            </button>
@@ -560,14 +631,14 @@ const VideoPlayer = ({ url, proxyEnabled }) => {
                   </div>
                 )}
 
-                <button onClick={() => setShowSettings(!showSettings)} className="hover:text-red-500 hover:scale-110 transition-all focus:outline-none drop-shadow-md">
-                  <Settings size={24} className={showSettings ? 'animate-spin-slow text-red-500' : ''} />
+                <button onClick={() => setShowSettings(!showSettings)} className="text-text-primary hover:text-accent hover:scale-110 transition-all focus:outline-none drop-shadow-md" aria-label="Playback settings" aria-expanded={showSettings}>
+                  <Settings size={24} aria-hidden="true" />
                 </button>
-                <button onClick={togglePiP} className="hover:text-red-500 hover:scale-110 transition-all focus:outline-none drop-shadow-md hidden sm:block">
-                  <PictureInPicture size={24} />
+                <button onClick={togglePiP} className="text-text-primary hover:text-accent hover:scale-110 transition-all focus:outline-none drop-shadow-md hidden sm:block" aria-label="Picture in picture">
+                  <PictureInPicture size={24} aria-hidden="true" />
                 </button>
-                <button onClick={toggleFullscreen} className="hover:text-red-500 hover:scale-110 transition-all focus:outline-none drop-shadow-md">
-                  {isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />}
+                <button onClick={toggleFullscreen} className="text-text-primary hover:text-accent hover:scale-110 transition-all focus:outline-none drop-shadow-md" aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}>
+                  {isFullscreen ? <Minimize size={24} aria-hidden="true" /> : <Maximize size={24} aria-hidden="true" />}
                 </button>
               </div>
             </div>

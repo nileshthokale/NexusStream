@@ -6,20 +6,27 @@
   * {
     -webkit-tap-highlight-color: transparent;
   }
-  
+
   body {
-    @apply bg-[#0a0a0f] text-white min-h-screen font-sans antialiased;
+    /* color.surface.base + color.text.primary per DESIGN.md */
+    background-color: #000000;
+    color: #ededed;
+    font-family: theme('fontFamily.sans');
+    font-size: 16px;      /* font.size.base */
+    font-weight: 400;     /* font.weight.base */
+    line-height: 24px;    /* font.lineHeight.base */
+    min-height: 100vh;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   ::selection {
     background: rgba(220, 38, 38, 0.3);
-    color: white;
+    color: #ffffff;
   }
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar (surface.muted tones) */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -28,11 +35,11 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: #2e2e2e; /* border.muted */
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: #7d7d7d; /* text.inverse */
 }
 
 /* Animations */
@@ -58,41 +65,110 @@
   }
 }
 
-@keyframes pulse-glow {
+/* Floating maroon orbs */
+@keyframes orb-float {
   0%, 100% {
-    box-shadow: 0 0 20px rgba(220, 38, 38, 0.1);
+    transform: translate(0, 0) scale(1);
+  }
+  25% {
+    transform: translate(30px, -40px) scale(1.05);
   }
   50% {
-    box-shadow: 0 0 30px rgba(220, 38, 38, 0.2);
+    transform: translate(-20px, 25px) scale(0.95);
   }
+  75% {
+    transform: translate(25px, 15px) scale(1.03);
+  }
+}
+
+/* Gradient shift for hero text and buttons */
+@keyframes gradient-pan {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Soft maroon glow pulse */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(128, 0, 32, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 35px rgba(220, 38, 38, 0.4);
+  }
+}
+
+/* Slow spin for settings icon */
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .animate-fade-in {
-  animation: fade-in 0.6s ease-out forwards;
+  animation: fade-in var(--motion-normal, 300ms) ease-out forwards;
 }
 
 .animate-fade-in-delay {
-  animation: fade-in 0.6s ease-out 0.2s forwards;
+  animation: fade-in var(--motion-normal, 300ms) ease-out 0.2s forwards;
   opacity: 0;
 }
 
 .animate-slide-up {
-  animation: slide-up 0.5s ease-out forwards;
+  animation: slide-up var(--motion-normal, 300ms) ease-out forwards;
 }
 
-/* Smooth transitions for all interactive elements */
+.animate-orb {
+  animation: orb-float 14s ease-in-out infinite;
+}
+
+.animate-orb-slow {
+  animation: orb-float 20s ease-in-out infinite reverse;
+}
+
+.animate-gradient-pan {
+  background-size: 200% 200%;
+  animation: gradient-pan 6s ease infinite;
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 3s ease-in-out infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+
+/* Motion tokens as CSS variables for non-Tailwind contexts */
+:root {
+  --motion-instant: 150ms;
+  --motion-fast: 200ms;
+  --motion-normal: 300ms;
+  --radius-xs: 4px;
+  --radius-sm: 5px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 9999px;
+}
+
+/* Smooth transitions for all interactive elements (motion.duration.instant) */
 button, a, input {
   transition-property: color, background-color, border-color, box-shadow, transform, opacity;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
 }
 
-/* Focus visible styles */
+/* Focus visible: WCAG 2.2 AA — must be visible on every interactive element */
 :focus-visible {
-  @apply outline-2 outline-offset-2 outline-red-500;
+  outline: 2px solid #dc2626;
+  outline-offset: 2px;
+  border-radius: var(--radius-xs, 4px);
 }
 
-/* Range input styling */
+/* Range input styling (progress/volume sliders) */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -111,7 +187,7 @@ input[type="range"]::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   border-radius: 9999px;
-  background: white;
+  background: #ffffff;
   border: 2px solid #dc2626;
   margin-top: -5px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
@@ -127,12 +203,31 @@ input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border-radius: 9999px;
-  background: white;
+  background: #ffffff;
   border: 2px solid #dc2626;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 /* Video player control transitions */
 .video-controls-transition {
-  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform var(--motion-normal, 300ms) cubic-bezier(0.4, 0, 0.2, 1), opacity var(--motion-normal, 300ms) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Reduced motion (WCAG 2.2 AA / prefers-reduced-motion) */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-fade-in-delay,
+  .animate-slide-up,
+  .animate-orb,
+  .animate-orb-slow,
+  .animate-gradient-pan,
+  .animate-glow-pulse,
+  .animate-spin-slow {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  button, a, input, .video-controls-transition {
+    transition-duration: 1ms;
+  }
 }
