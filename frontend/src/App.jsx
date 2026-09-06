@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import VideoPlayer from './components/VideoPlayer';
-import { Play, Link as LinkIcon, Copy, History, Trash2, Server, MonitorPlay, ChevronDown, ExternalLink, Check } from 'lucide-react';
+import { isSubtitleFile } from './utils/subtitles';
+import { Play, Link as LinkIcon, Copy, History, Trash2, Server, MonitorPlay, ChevronDown, ExternalLink, Check, Upload } from 'lucide-react';
 
 function App() {
   const [urlInput, setUrlInput] = useState('');
@@ -9,6 +10,21 @@ function App() {
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [localFile, setLocalFile] = useState(null);
+  const [subtitleFile, setSubtitleFile] = useState(null);
+  const [dragActive, setDragActive] = useState(false);
+  const videoInputRef = useRef(null);
+  const dragDepthRef = useRef(0);
+
+  // Deep-link support: ?url=<video> opens the player with that video loaded
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shared = params.get('url');
+    if (shared) {
+      setUrlInput(shared);
+      setCurrentUrl(shared);
+    }
+  }, []);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem('videoHistory');
@@ -20,6 +36,8 @@ function App() {
   const handlePlay = (e) => {
     e.preventDefault();
     if (!urlInput.trim()) return;
+    setLocalFile(null); // switching to URL playback
+    setSubtitleFile(null);
     setCurrentUrl(urlInput);
     const newHistory = [urlInput, ...history.filter(u => u !== urlInput)].slice(0, 10);
     setHistory(newHistory);
@@ -28,6 +46,8 @@ function App() {
 
   const handleHistoryClick = (url) => {
     setUrlInput(url);
+    setLocalFile(null);
+    setSubtitleFile(null);
     setCurrentUrl(url);
   };
 
@@ -44,7 +64,63 @@ function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Local file handling
+  const loadLocalFile = useCallback((file) => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setLocalFile(file);
+    setCurrentUrl(url);
+    setUrlInput('');
+    setSubtitleFile(null);
+  }, []);
+
+  const handleFileSelect = (e) => {
+    loadLocalFile(e.target.files?.[0]);
+    e.target.value = '';
+  };
+
+  // Drag & drop: video files load for playback; subtitle files attach to the player
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current += 1;
+    if (e.dataTransfer?.types?.includes('Files')) setDragActive(true);
+  };
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current -= 1;
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0;
+      setDragActive(false);
+    }
+  };
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = 0;
+    setDragActive(false);
+
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length === 0) return;
+
+    const videoFile = files.find(f => !isSubtitleFile(f.name) && /\.(mp4|mkv|webm|avi|mov|m4v|mpd|m3u8|ogv)$/i.test(f.name) || f.type.startsWith('video/'));
+    const subFile = files.find(f => isSubtitleFile(f.name));
+
+    if (subFile) setSubtitleFile(subFile);
+    if (videoFile) {
+      loadLocalFile(videoFile);
+    } else if (subFile && !currentUrl) {
+      // subtitle alone: nothing to attach to yet
+    }
+  };
+
   const formatUrl = (url) => {
+    if (localFile) return localFile.name;
     try {
       const u = new URL(url);
       return u.hostname + u.pathname.slice(0, 40) + (u.pathname.length > 40 ? '...' : '');
@@ -53,22 +129,19 @@ function App() {
     }
   };
 
-  const supportedFormats = [
-    { ext: '.mp4', label: 'MP4' },
-    { ext: '.m3u8', label: 'HLS' },
-    { ext: '.mpd', label: 'DASH' },
-    { ext: 'YT', label: 'YouTube' },
-    { ext: 'VM', label: 'Vimeo' },
-  ];
-
   return (
-    <div className="min-h-screen bg-surface-base text-text-primary flex flex-col relative overflow-hidden">
+    <div
+      className="min-h-screen bg-surface-base text-text-primary flex flex-col relative overflow-hidden"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       {/* Ambient background — animated maroon orbs + grid */}
       <div className="fixed inset-0 pointer-events-none z-0" aria-hidden="true">
         <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-gradient-to-br from-accent-maroon/15 to-accent/10 rounded-full blur-[150px] animate-orb" />
         <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-gradient-to-tl from-accent-maroon/15 to-accent/10 rounded-full blur-[120px] animate-orb-slow" />
         <div className="absolute top-[40%] left-[50%] w-[300px] h-[300px] bg-accent-maroonDark/20 rounded-full blur-[100px] animate-orb" />
-        {/* Subtle grid texture */}
         <div
           className="absolute inset-0 opacity-[0.03]"
           style={{
@@ -77,6 +150,18 @@ function App() {
           }}
         />
       </div>
+
+      {/* Drag & drop overlay */}
+      {dragActive && (
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-surface-base/80 backdrop-blur-md border-4 border-dashed border-accent rounded-xl m-4" role="status" aria-live="polite">
+          <Upload size={56} className="text-accent mb-4 animate-glow-pulse" aria-hidden="true" />
+          <p className="text-2xl font-bold text-text-primary">Drop your video or subtitle file</p>
+          <p className="text-md text-text-secondary mt-2">Video plays instantly · .srt / .vtt attaches as subtitles</p>
+        </div>
+      )}
+
+      {/* Hidden file input for local video */}
+      <input ref={videoInputRef} type="file" accept="video/*,.mkv,.avi,.mov,.m4v,.ts" onChange={handleFileSelect} className="hidden" aria-hidden="true" tabIndex={-1} />
 
       {/* Header */}
       <header className="w-full relative z-10 border-b border-border-muted/50 bg-surface-raised/80 backdrop-blur-xl">
@@ -94,27 +179,32 @@ function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Supported formats badges — desktop only */}
-            <div className="hidden lg:flex items-center gap-1.5" aria-label="Supported formats">
-              {supportedFormats.map(f => (
-                <span key={f.ext} className="text-xs font-bold text-text-tertiary bg-surface-muted border border-border-muted px-2 py-1 rounded-sm">
-                  {f.label}
-                </span>
-              ))}
-            </div>
+            {/* Local file button */}
+            <button
+              onClick={() => videoInputRef.current?.click()}
+              className="flex items-center gap-2 text-xs font-semibold text-text-secondary hover:text-text-primary bg-surface-muted/80 hover:bg-surface-muted px-3 py-1.5 rounded-md border border-border-muted/60 hover:border-border-muted transition-all duration-instant"
+              aria-label="Open local video file"
+            >
+              <Upload size={14} aria-hidden="true" />
+              <span className="hidden sm:inline">Open File</span>
+            </button>
 
             {/* CORS Proxy Toggle */}
-            <div className="flex items-center gap-2.5 bg-surface-muted/80 backdrop-blur-sm px-3 py-2 rounded-lg border border-border-muted/60">
-              <Server size={16} className={proxyEnabled ? 'text-accent' : 'text-text-inverse'} aria-hidden="true" />
-              <span className="text-xs font-medium text-text-secondary hidden sm:inline">CORS Proxy</span>
+            <div className="flex items-center gap-2 bg-surface-muted/80 px-2.5 py-1.5 rounded-md border border-border-muted/60">
+              <Server size={14} className={proxyEnabled ? 'text-accent' : 'text-text-inverse'} aria-hidden="true" />
+              <span className={`text-xs font-semibold ${proxyEnabled ? 'text-accent' : 'text-text-tertiary'} hidden sm:inline`}>
+                {proxyEnabled ? 'Proxy On' : 'Proxy Off'}
+              </span>
               <button
                 onClick={() => setProxyEnabled(!proxyEnabled)}
                 role="switch"
                 aria-checked={proxyEnabled}
                 aria-label="Toggle CORS proxy"
-                className={`w-9 h-5 rounded-2xl relative transition-all duration-fast ${proxyEnabled ? 'bg-accent shadow-lg shadow-accent/30' : 'bg-border-muted'}`}
+                className={`relative w-9 h-5 rounded-full transition-colors duration-fast focus:outline-none ${proxyEnabled ? 'bg-accent' : 'bg-border-muted'}`}
               >
-                <span className={`w-3.5 h-3.5 bg-white rounded-2xl absolute top-[3px] transition-all duration-fast shadow-sm ${proxyEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'}`} />
+                <span
+                  className={`absolute top-1/2 -translate-y-1/2 left-0 w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-fast ${proxyEnabled ? 'translate-x-[20px]' : 'translate-x-[4px]'}`}
+                />
               </button>
             </div>
           </div>
@@ -131,7 +221,7 @@ function App() {
               Stream <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent-maroonLight via-accent to-accent-hover animate-gradient-pan">Any Video</span>
             </h2>
             <p className="text-text-secondary text-md max-w-xl mx-auto leading-relaxed">
-              Paste any video URL and start watching instantly. Supports MP4, HLS, DASH, YouTube, and Vimeo.
+              Paste any video URL or drag &amp; drop a local file. Supports MP4, HLS, DASH, MKV, YouTube, and Vimeo.
             </p>
           </div>
         )}
@@ -160,30 +250,24 @@ function App() {
           </div>
         </form>
 
-        {/* Supported formats — mobile */}
-        {!currentUrl && (
-          <div className="flex lg:hidden items-center justify-center gap-2 flex-wrap animate-fade-in-delay" aria-label="Supported formats">
-            {supportedFormats.map(f => (
-              <span key={f.ext} className="text-xs font-bold text-text-tertiary bg-surface-muted/60 border border-border-muted/40 px-2.5 py-1 rounded-md">
-                {f.label}
-              </span>
-            ))}
-          </div>
-        )}
-
         {/* Player Section */}
         {currentUrl ? (
           <div className="w-full flex flex-col gap-4 animate-slide-up">
             <div className="w-full rounded-xl ring-1 ring-accent-maroon/40 shadow-[0_0_40px_rgba(128,0,32,0.25)] overflow-hidden bg-surface-base transition-shadow duration-normal hover:shadow-[0_0_55px_rgba(128,0,32,0.4)]">
-              <VideoPlayer url={currentUrl} proxyEnabled={proxyEnabled} />
+              <VideoPlayer url={currentUrl} proxyEnabled={proxyEnabled} localFile={localFile} subtitleFile={subtitleFile} onSubtitleFile={setSubtitleFile} />
             </div>
 
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 px-1">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <ExternalLink size={14} className="text-text-inverse flex-shrink-0" aria-hidden="true" />
-                <p className="text-text-secondary text-sm truncate font-mono" title={currentUrl}>
+                <p className="text-text-secondary text-sm truncate font-mono" title={localFile ? localFile.name : currentUrl}>
                   {formatUrl(currentUrl)}
                 </p>
+                {subtitleFile && (
+                  <span className="text-xs text-accent bg-accent/10 border border-accent/30 px-2 py-0.5 rounded-sm flex-shrink-0" title={subtitleFile.name}>
+                    CC: {subtitleFile.name.length > 20 ? subtitleFile.name.slice(0, 17) + '...' : subtitleFile.name}
+                  </span>
+                )}
               </div>
               <button
                 onClick={copyEmbedLink}
@@ -199,15 +283,19 @@ function App() {
             </div>
           </div>
         ) : (
-          <div className="w-full aspect-video border-2 border-dashed border-accent-maroon/30 rounded-xl flex flex-col items-center justify-center text-text-tertiary p-6 sm:p-8 text-center bg-gradient-to-b from-accent-maroonDark/10 to-surface-muted/10 backdrop-blur-sm hover:border-accent/50 transition-colors duration-normal animate-fade-in-delay">
+          <button
+            type="button"
+            onClick={() => videoInputRef.current?.click()}
+            className="w-full aspect-video border-2 border-dashed border-accent-maroon/30 rounded-xl flex flex-col items-center justify-center text-text-tertiary p-6 sm:p-8 text-center bg-gradient-to-b from-accent-maroonDark/10 to-surface-muted/10 backdrop-blur-sm hover:border-accent/50 hover:text-text-secondary transition-colors duration-normal animate-fade-in-delay"
+          >
             <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-br from-surface-muted to-accent-maroonDark/40 border border-accent-maroon/30 flex items-center justify-center mb-5 animate-glow-pulse">
               <MonitorPlay size={36} className="text-accent" aria-hidden="true" />
             </div>
             <h2 className="text-2xl font-bold text-text-secondary mb-2">No Video Selected</h2>
             <p className="max-w-md text-md leading-relaxed">
-              Paste a URL above to start streaming. We support direct files, HLS, DASH, YouTube, and Vimeo.
+              Paste a URL above, drop a file anywhere, or click to browse. Supports MP4, HLS, DASH, MKV, YouTube, and Vimeo.
             </p>
-          </div>
+          </button>
         )}
 
         {/* History Section */}

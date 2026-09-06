@@ -1,0 +1,24 @@
+{
+  "name": "NexusStream - Universal Video Streaming",
+  "short_name": "NexusStream",
+  "description": "Paste any video URL or drop a local file and start watching instantly. Supports MP4, HLS, DASH, MKV, YouTube, and Vimeo.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "description": "Universal video player",
+  "icons": [
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
