@@ -46,13 +46,24 @@ function startTranscodeSession(sid, targetUrl) {
     fs.mkdirSync(dir, { recursive: true });
     const playlist = path.join(dir, 'index.m3u8');
 
-    // Video stream copied (fast), audio re-encoded to AAC so browsers can play it
+    // Video stream copied (fast), audio re-encoded to AAC so browsers can play it.
+    // Exception: codecs that cannot live in MPEG-TS at all (Theora in OGV,
+    // WMV3 in WMV, VP6 in FLV) would be silently dropped by a stream copy,
+    // leaving an audio-only stream — those are re-encoded to H.264 instead.
+    const REENCODE_VIDEO_EXTS = ['.ogv', '.ogg', '.wmv', '.flv'];
+    const reencodeVideo = REENCODE_VIDEO_EXTS.some((ext) => targetUrl.split('?')[0].toLowerCase().endsWith(ext));
+    const videoCodecArgs = reencodeVideo
+        ? ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23']
+        : ['-c:v', 'copy'];
     const proc = spawn(FFMPEG, [
         '-hide_banner', '-loglevel', 'error',
         '-user_agent', BROWSER_UA,
         '-referer', new URL(targetUrl).origin + '/',
+        // Generate timestamps for containers that lack them (many AVI files):
+        // without this, stream-copy into MPEG-TS fails and yields an empty playlist
+        '-fflags', '+genpts',
         '-i', targetUrl,
-        '-c:v', 'copy',
+        ...videoCodecArgs,
         '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
         '-hls_time', '6',
         '-hls_list_size', '0',
@@ -176,6 +187,37 @@ process.on('SIGTERM', () => { killAllSessions(); process.exit(0); });
 // ---------------------------------------------------------------------------
 // CORS proxy: /proxy?url=https://example.com/video.mp4
 // ---------------------------------------------------------------------------
+// Playlist/manifest rewriting ------------------------------------------------
+// Players resolve the relative segment URLs inside an .m3u8 / .mpd against
+// the URL they fetched it from. Served raw through /proxy, those resolve to
+// /<segment> on this server and 404, so HLS/DASH break in proxy mode.
+// Fix: HLS URIs are rewritten to go through /proxy themselves; DASH gets a
+// <BaseURL> pointing at the target's own directory so dash.js resolves the
+// manifest's segment templates against the real origin.
+function rewriteHlsPlaylist(body, targetUrl) {
+    const toProxy = (u) => {
+        try {
+            const abs = new URL(u, targetUrl).href;
+            if (abs.includes('/proxy?url=')) return u;
+            return `/proxy?url=${encodeURIComponent(abs)}`;
+        } catch { return u; }
+    };
+    return body.split('\n').map((line) => {
+        const t = line.trim();
+        if (!t) return line;
+        if (t.startsWith('#')) {
+            return line.replace(/URI="([^"]+)"/g, (m, u) => `URI="${toProxy(u)}"`);
+        }
+        return toProxy(t);
+    }).join('\n');
+}
+
+function rewriteDashManifest(body, targetUrl) {
+    if (/<BaseURL>/i.test(body)) return body;
+    const dir = targetUrl.slice(0, targetUrl.lastIndexOf('/') + 1);
+    return body.replace(/<MPD([^>]*)>/i, `<MPD$1><BaseURL>${dir}</BaseURL>`);
+}
+
 const SKIP_RESPONSE_HEADERS = new Set([
     'transfer-encoding',
     'connection',
@@ -234,6 +276,25 @@ app.get('/proxy', async (req, res) => {
             if (SKIP_RESPONSE_HEADERS.has(lower) || lower.startsWith('access-control-')) return;
             res.setHeader(key, value);
         });
+
+        // Playlists/manifests are small: buffer them so segment URLs can be
+        // rewritten (see rewriteHlsPlaylist / rewriteDashManifest above).
+        const upstreamType = (resp.headers['content-type'] || '').toLowerCase();
+        const isHls = parsed.pathname.toLowerCase().endsWith('.m3u8') || upstreamType.includes('mpegurl');
+        const isDash = parsed.pathname.toLowerCase().endsWith('.mpd') || upstreamType.includes('dash+xml');
+
+        if (isHls || isDash) {
+            const chunks = [];
+            resp.data.on('data', (c) => chunks.push(c));
+            resp.data.on('end', () => {
+                const body = Buffer.concat(chunks).toString('utf8');
+                res.setHeader('Content-Type', isHls ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
+                res.status(resp.status).send(isHls ? rewriteHlsPlaylist(body, targetUrl) : rewriteDashManifest(body, targetUrl));
+            });
+            resp.data.on('error', () => { if (!res.headersSent) res.status(502).send('Proxy stream error'); });
+            res.on('close', () => resp.data.destroy());
+            return;
+        }
 
         res.status(resp.status);
         resp.data.pipe(res);
