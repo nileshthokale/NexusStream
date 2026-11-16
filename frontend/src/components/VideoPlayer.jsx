@@ -52,7 +52,10 @@ const VideoPlayer = ({ url, proxyEnabled, localFile, subtitleFile, onSubtitleFil
 
   // Local files and YouTube/Vimeo bypass proxy; server-side remux for unsupported containers
   const useProxy = proxyEnabled && !isReactPlayerFallback && !isLocalFile(url);
-  const shouldTranscode = useProxy && needsTranscode(url);
+  // Transcoding is a separate backend service, not part of the CORS proxy:
+  // containers the browser cannot play (MKV, AVI, OGV...) must be transcoded
+  // even when the proxy toggle is off, otherwise they fail by default.
+  const shouldTranscode = !isReactPlayerFallback && !isLocalFile(url) && needsTranscode(url);
 
   // Core State
   const [error, setError] = useState(null);
