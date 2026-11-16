@@ -5,7 +5,8 @@ export const proxyUrl = (url) => `${PROXY_BASE}/proxy?url=${encodeURIComponent(u
 export const transcodeUrl = (url) => `${PROXY_BASE}/transcode?url=${encodeURIComponent(url)}`;
 
 // Containers the <video> element cannot play natively (need server-side transcoding)
-const TRANSCODE_EXTENSIONS = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.m2ts', '.ts'];
+// .ogv/.ogg included: Chrome ships no Theora decoder, so OGV plays audio-only without this
+const TRANSCODE_EXTENSIONS = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.m2ts', '.ts', '.ogv', '.ogg'];
 
 // Files with known-browser-unsupported audio codecs (AC3/EAC3/DTS/TrueHD) —
 // detected from the filename since we cannot sniff codecs client-side
